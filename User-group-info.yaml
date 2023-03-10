@@ -1,0 +1,55 @@
+---
+- name: Retrieve user and group information and send to email
+  hosts: all
+  vars:
+    email_address: "abc@123.com"
+    email_subject: "User and group information"
+
+  tasks:
+    - name: Get user information
+      command: getent passwd
+      register: user_info
+
+    - name: Get group information
+      command: getent group
+      register: group_info
+
+    - name: Get sudo privileges
+      command: grep -Po '^sudo.*$' /etc/group
+      register: sudo_info
+
+    - name: Create dictionary of user information
+      set_fact:
+        user_dict: "{{ user_dict | default({}) | combine({item.split(':')[0]: {'gid': item.split(':')[3], 'homedir': item.split(':')[5]}}) }}"
+      loop: "{{ user_info.stdout_lines }}"
+
+    - name: Add sudo privileges to dictionary
+      set_fact:
+        user_dict: "{{ user_dict | combine({item.split(':')[0]: {'gid': item.split(':')[3], 'homedir': item.split(':')[5], 'sudo': 'yes'}}) }}"
+      loop: "{{ sudo_info.stdout_lines }}"
+      when: item.split(':')[0] in user_dict.keys()
+
+    - name: Format information into rows and columns of respective users
+      set_fact:
+        output_rows: "{{ output_rows | default([]) + [[item.key, item.value.gid, item.value.homedir, item.value.sudo | default('no')]] }}"
+      loop: "{{ user_dict | dict2items }}"
+
+    - name: Save information to CSV file
+      csvfile:
+        path: /path/to/user_info.csv
+        delimiter: ','
+        quotechar: '"'
+        content:
+          - ['Username', 'Group ID', 'Home Directory', 'Sudo']
+          - "{{ output_rows }}"
+
+    - name: Send CSV file by email
+      mail:
+        host: "smtp.example.com"
+        port: 587
+        username: "username"
+        password: "password"
+        to: "{{ email_address }}"
+        subject: "{{ email_subject }}"
+        attach:
+          - "/path/to/user_info.csv"
